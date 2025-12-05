@@ -63,10 +63,15 @@ function AppContent() {
   const [initialized, setInitialized] = useState(false);
 
   useEffect(() => {
-    initialize().then(() => setInitialized(true));
+    initialize()
+      .then(() => setInitialized(true))
+      .catch((error) => {
+        console.error('Initialization error:', error);
+        setInitialized(true); // Allow app to render even on error
+      });
   }, [initialize]);
 
-  if (!initialized || isLoading) {
+  if (!initialized) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />

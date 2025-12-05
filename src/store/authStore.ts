@@ -88,39 +88,49 @@ export const useAuthStore = create<AuthState>()(
       },
 
       initialize: async () => {
-        set({ isLoading: true });
-        
-        // Set up auth state listener
-        const { data: { subscription } } = supabase.auth.onAuthStateChange(
-          (event, session) => {
-            set({ 
-              session, 
-              user: session?.user ?? null,
-              isAuthenticated: !!session?.user 
-            });
-            
-            // Defer profile fetch to avoid deadlock
-            if (session?.user) {
-              setTimeout(() => {
-                get().fetchProfile(session.user.id);
-              }, 0);
-            } else {
-              set({ profile: null });
+        try {
+          set({ isLoading: true });
+          
+          // Set up auth state listener
+          supabase.auth.onAuthStateChange(
+            (event, session) => {
+              set({ 
+                session, 
+                user: session?.user ?? null,
+                isAuthenticated: !!session?.user 
+              });
+              
+              // Defer profile fetch to avoid deadlock
+              if (session?.user) {
+                setTimeout(() => {
+                  get().fetchProfile(session.user.id);
+                }, 0);
+              } else {
+                set({ profile: null });
+              }
             }
+          );
+
+          // Check for existing session
+          const { data: { session }, error } = await supabase.auth.getSession();
+          
+          if (error) {
+            console.error('Error getting session:', error);
           }
-        );
+          
+          set({ 
+            session: session ?? null, 
+            user: session?.user ?? null,
+            isAuthenticated: !!session?.user,
+            isLoading: false 
+          });
 
-        // Check for existing session
-        const { data: { session } } = await supabase.auth.getSession();
-        set({ 
-          session, 
-          user: session?.user ?? null,
-          isAuthenticated: !!session?.user,
-          isLoading: false 
-        });
-
-        if (session?.user) {
-          await get().fetchProfile(session.user.id);
+          if (session?.user) {
+            await get().fetchProfile(session.user.id);
+          }
+        } catch (error) {
+          console.error('Error initializing auth:', error);
+          set({ isLoading: false });
         }
       },
 
