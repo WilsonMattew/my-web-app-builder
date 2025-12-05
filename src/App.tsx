@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -19,11 +20,20 @@ import AIAssistants from "@/pages/AIAssistants";
 import Analytics from "@/pages/Analytics";
 import Settings from "@/pages/Settings";
 import NotFound from "@/pages/NotFound";
+import { Loader2 } from "lucide-react";
 
 const queryClient = new QueryClient();
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated } = useAuthStore();
+  const { isAuthenticated, isLoading } = useAuthStore();
+  
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
   
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
@@ -48,52 +58,73 @@ function RoleGuard({
   return <>{children}</>;
 }
 
+function AppContent() {
+  const { initialize, isLoading } = useAuthStore();
+  const [initialized, setInitialized] = useState(false);
+
+  useEffect(() => {
+    initialize().then(() => setInitialized(true));
+  }, [initialize]);
+
+  if (!initialized || isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  return (
+    <Routes>
+      {/* Public Routes */}
+      <Route path="/login" element={<Login />} />
+      
+      {/* Protected Routes */}
+      <Route
+        element={
+          <ProtectedRoute>
+            <AppLayout />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<Navigate to="/dashboard" replace />} />
+        <Route path="dashboard" element={<Dashboard />} />
+        <Route path="projects" element={<Projects />} />
+        <Route path="tasks" element={<Tasks />} />
+        <Route 
+          path="clients" 
+          element={
+            <RoleGuard allowedRoles={['admin', 'marketing']}>
+              <Clients />
+            </RoleGuard>
+          } 
+        />
+        <Route path="communication" element={<Communication />} />
+        <Route path="ai" element={<AIAssistants />} />
+        <Route 
+          path="analytics" 
+          element={
+            <RoleGuard allowedRoles={['admin', 'marketing']}>
+              <Analytics />
+            </RoleGuard>
+          } 
+        />
+        <Route path="settings" element={<Settings />} />
+      </Route>
+      
+      {/* Catch-all */}
+      <Route path="*" element={<NotFound />} />
+    </Routes>
+  );
+}
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <Toaster />
       <Sonner />
       <BrowserRouter>
-        <Routes>
-          {/* Public Routes */}
-          <Route path="/login" element={<Login />} />
-          
-          {/* Protected Routes */}
-          <Route
-            element={
-              <ProtectedRoute>
-                <AppLayout />
-              </ProtectedRoute>
-            }
-          >
-            <Route index element={<Navigate to="/dashboard" replace />} />
-            <Route path="dashboard" element={<Dashboard />} />
-            <Route path="projects" element={<Projects />} />
-            <Route path="tasks" element={<Tasks />} />
-            <Route 
-              path="clients" 
-              element={
-                <RoleGuard allowedRoles={['admin', 'marketing']}>
-                  <Clients />
-                </RoleGuard>
-              } 
-            />
-            <Route path="communication" element={<Communication />} />
-            <Route path="ai" element={<AIAssistants />} />
-            <Route 
-              path="analytics" 
-              element={
-                <RoleGuard allowedRoles={['admin', 'marketing']}>
-                  <Analytics />
-                </RoleGuard>
-              } 
-            />
-            <Route path="settings" element={<Settings />} />
-          </Route>
-          
-          {/* Catch-all */}
-          <Route path="*" element={<NotFound />} />
-        </Routes>
+        <AppContent />
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>

@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { supabase } from '@/integrations/supabase/client';
+import { User, Session } from '@supabase/supabase-js';
 
 export type UserRole = 'admin' | 'developer' | 'creative' | 'marketing';
 
@@ -17,81 +19,164 @@ export interface Profile {
 
 interface AuthState {
   isAuthenticated: boolean;
+  user: User | null;
+  session: Session | null;
   profile: Profile | null;
+  isLoading: boolean;
+  setUser: (user: User | null) => void;
+  setSession: (session: Session | null) => void;
   setProfile: (profile: Profile | null) => void;
+  setLoading: (loading: boolean) => void;
   login: (email: string, password: string) => Promise<void>;
-  logout: () => void;
+  signup: (email: string, password: string, fullName: string) => Promise<void>;
+  logout: () => Promise<void>;
+  fetchProfile: (userId: string) => Promise<void>;
+  initialize: () => Promise<void>;
 }
-
-// Mock users for demonstration
-const MOCK_USERS: Record<string, Profile> = {
-  'admin@skybeam.studio': {
-    id: '1',
-    email: 'admin@skybeam.studio',
-    full_name: 'Alex Morgan',
-    role: 'admin',
-    external_persona: 'SkyBeam Founder',
-    avatar_url: '',
-    availability_status: 'available',
-    current_bandwidth: 65,
-    skills: ['Strategy', 'Leadership', 'Business Development'],
-  },
-  'dev@skybeam.studio': {
-    id: '2',
-    email: 'dev@skybeam.studio',
-    full_name: 'Jordan Chen',
-    role: 'developer',
-    external_persona: 'SkyBeam Developer Head',
-    avatar_url: '',
-    availability_status: 'available',
-    current_bandwidth: 80,
-    skills: ['React', 'TypeScript', 'Node.js', 'PostgreSQL'],
-  },
-  'creative@skybeam.studio': {
-    id: '3',
-    email: 'creative@skybeam.studio',
-    full_name: 'Sam Rivera',
-    role: 'creative',
-    external_persona: 'SkyBeam Creative Director',
-    avatar_url: '',
-    availability_status: 'busy',
-    current_bandwidth: 90,
-    skills: ['UI/UX Design', 'Branding', 'Motion Graphics'],
-  },
-  'marketing@skybeam.studio': {
-    id: '4',
-    email: 'marketing@skybeam.studio',
-    full_name: 'Taylor Kim',
-    role: 'marketing',
-    external_persona: 'SkyBeam Marketing Lead',
-    avatar_url: '',
-    availability_status: 'available',
-    current_bandwidth: 45,
-    skills: ['Social Media', 'SEO', 'Content Strategy', 'Analytics'],
-  },
-};
 
 export const useAuthStore = create<AuthState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       isAuthenticated: false,
+      user: null,
+      session: null,
       profile: null,
-      setProfile: (profile) => set({ profile, isAuthenticated: !!profile }),
-      login: async (email: string, password: string) => {
-        // Simulate API call
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        
-        const user = MOCK_USERS[email.toLowerCase()];
-        if (user && password === 'demo123') {
-          set({ isAuthenticated: true, profile: user });
-        } else {
-          throw new Error('Invalid credentials. Try admin@skybeam.studio with password demo123');
+      isLoading: true,
+
+      setUser: (user) => set({ user, isAuthenticated: !!user }),
+      setSession: (session) => set({ session }),
+      setProfile: (profile) => set({ profile }),
+      setLoading: (isLoading) => set({ isLoading }),
+
+      fetchProfile: async (userId: string) => {
+        try {
+          // Fetch profile
+          const { data: profileData, error: profileError } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', userId)
+            .maybeSingle();
+
+          if (profileError) throw profileError;
+
+          // Fetch user role
+          const { data: roleData, error: roleError } = await supabase
+            .from('user_roles')
+            .select('role')
+            .eq('user_id', userId)
+            .maybeSingle();
+
+          if (roleError) throw roleError;
+
+          if (profileData) {
+            const profile: Profile = {
+              id: profileData.id,
+              email: profileData.email,
+              full_name: profileData.full_name,
+              role: (roleData?.role as UserRole) || 'developer',
+              external_persona: profileData.external_persona || undefined,
+              avatar_url: profileData.avatar_url || undefined,
+              availability_status: profileData.availability_status || 'available',
+              current_bandwidth: profileData.current_bandwidth || 0,
+              skills: profileData.skills || [],
+            };
+            set({ profile });
+          }
+        } catch (error) {
+          console.error('Error fetching profile:', error);
         }
       },
-      logout: () => set({ isAuthenticated: false, profile: null }),
+
+      initialize: async () => {
+        set({ isLoading: true });
+        
+        // Set up auth state listener
+        const { data: { subscription } } = supabase.auth.onAuthStateChange(
+          (event, session) => {
+            set({ 
+              session, 
+              user: session?.user ?? null,
+              isAuthenticated: !!session?.user 
+            });
+            
+            // Defer profile fetch to avoid deadlock
+            if (session?.user) {
+              setTimeout(() => {
+                get().fetchProfile(session.user.id);
+              }, 0);
+            } else {
+              set({ profile: null });
+            }
+          }
+        );
+
+        // Check for existing session
+        const { data: { session } } = await supabase.auth.getSession();
+        set({ 
+          session, 
+          user: session?.user ?? null,
+          isAuthenticated: !!session?.user,
+          isLoading: false 
+        });
+
+        if (session?.user) {
+          await get().fetchProfile(session.user.id);
+        }
+      },
+
+      login: async (email: string, password: string) => {
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+
+        if (error) throw error;
+
+        if (data.user) {
+          await get().fetchProfile(data.user.id);
+        }
+      },
+
+      signup: async (email: string, password: string, fullName: string) => {
+        const redirectUrl = `${window.location.origin}/`;
+        
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            emailRedirectTo: redirectUrl,
+            data: {
+              full_name: fullName,
+            },
+          },
+        });
+
+        if (error) throw error;
+
+        // Update the profile with the full name
+        if (data.user) {
+          await supabase
+            .from('profiles')
+            .update({ full_name: fullName })
+            .eq('id', data.user.id);
+            
+          await get().fetchProfile(data.user.id);
+        }
+      },
+
+      logout: async () => {
+        await supabase.auth.signOut();
+        set({ 
+          isAuthenticated: false, 
+          user: null, 
+          session: null, 
+          profile: null 
+        });
+      },
     }),
     {
       name: 'skybeam-auth',
+      partialize: (state) => ({}), // Don't persist anything, rely on Supabase session
     }
   )
 );
