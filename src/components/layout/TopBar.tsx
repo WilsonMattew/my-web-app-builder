@@ -1,4 +1,5 @@
 import { Bell, Search, LogOut, User } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/store/authStore';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,6 +14,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
 
 const roleColors: Record<string, string> = {
   admin: 'bg-primary',
@@ -23,6 +25,7 @@ const roleColors: Record<string, string> = {
 
 export function TopBar() {
   const { profile, logout } = useAuthStore();
+  const navigate = useNavigate();
 
   const getInitials = (name: string) => {
     return name
@@ -30,6 +33,16 @@ export function TopBar() {
       .map((n) => n[0])
       .join('')
       .toUpperCase();
+  };
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+      toast.success('Logged out successfully');
+      navigate('/login');
+    } catch (error) {
+      toast.error('Failed to logout');
+    }
   };
 
   return (
@@ -83,12 +96,12 @@ export function TopBar() {
               </div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem>
+            <DropdownMenuItem onClick={() => navigate('/settings')}>
               <User className="mr-2 h-4 w-4" />
               Profile
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={logout} className="text-destructive focus:text-destructive">
+            <DropdownMenuItem onClick={handleLogout} className="text-destructive focus:text-destructive">
               <LogOut className="mr-2 h-4 w-4" />
               Log out
             </DropdownMenuItem>

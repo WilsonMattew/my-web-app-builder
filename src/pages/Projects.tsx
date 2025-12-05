@@ -1,8 +1,10 @@
 import { useState } from 'react';
-import { mockProjects, Project } from '@/lib/mockData';
+import { useProjects, useClients, useCreateProject } from '@/hooks/useSupabaseData';
 import { ProjectCard } from '@/components/dashboard/ProjectCard';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import {
   Select,
   SelectContent,
@@ -10,14 +12,24 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Search, Plus, LayoutGrid, List, Filter } from 'lucide-react';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Search, Plus, LayoutGrid, List, Filter, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const statusFilters = [
   { value: 'all', label: 'All Projects' },
-  { value: 'active', label: 'Active' },
-  { value: 'pending', label: 'Pending' },
+  { value: 'in_progress', label: 'In Progress' },
+  { value: 'planning', label: 'Planning' },
   { value: 'review', label: 'In Review' },
   { value: 'completed', label: 'Completed' },
 ];
@@ -26,20 +38,50 @@ export default function Projects() {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [newProject, setNewProject] = useState({
+    name: '',
+    description: '',
+    client_id: '',
+    budget: '',
+    deadline: '',
+  });
 
-  const filteredProjects = mockProjects.filter((project) => {
+  const { data: projects, isLoading } = useProjects();
+  const { data: clients } = useClients();
+  const createProject = useCreateProject();
+
+  const filteredProjects = (projects || []).filter((project: any) => {
     const matchesSearch =
-      project.project_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      project.client?.company_name.toLowerCase().includes(searchQuery.toLowerCase());
+      project.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      project.clients?.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      project.clients?.company?.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesStatus = statusFilter === 'all' || project.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
 
   const projectsByStatus = {
-    active: filteredProjects.filter((p) => p.status === 'active'),
-    pending: filteredProjects.filter((p) => p.status === 'pending'),
-    review: filteredProjects.filter((p) => p.status === 'review'),
-    completed: filteredProjects.filter((p) => p.status === 'completed'),
+    in_progress: filteredProjects.filter((p: any) => p.status === 'in_progress'),
+    planning: filteredProjects.filter((p: any) => p.status === 'planning'),
+    review: filteredProjects.filter((p: any) => p.status === 'review'),
+    completed: filteredProjects.filter((p: any) => p.status === 'completed'),
+  };
+
+  const handleCreateProject = async () => {
+    if (!newProject.name) return;
+    
+    await createProject.mutateAsync({
+      name: newProject.name,
+      description: newProject.description || null,
+      client_id: newProject.client_id || null,
+      budget: newProject.budget ? parseFloat(newProject.budget) : null,
+      deadline: newProject.deadline || null,
+      status: 'planning',
+      progress: 0,
+    });
+    
+    setNewProject({ name: '', description: '', client_id: '', budget: '', deadline: '' });
+    setIsDialogOpen(false);
   };
 
   return (
@@ -52,10 +94,96 @@ export default function Projects() {
             Manage and track all your projects in one place
           </p>
         </div>
-        <Button className="gap-2">
-          <Plus className="h-4 w-4" />
-          New Project
-        </Button>
+        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+          <DialogTrigger asChild>
+            <Button className="gap-2">
+              <Plus className="h-4 w-4" />
+              New Project
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="sm:max-w-[500px]">
+            <DialogHeader>
+              <DialogTitle>Create New Project</DialogTitle>
+              <DialogDescription>
+                Add a new project to your workspace
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="name">Project Name</Label>
+                <Input
+                  id="name"
+                  placeholder="Enter project name"
+                  value={newProject.name}
+                  onChange={(e) => setNewProject({ ...newProject, name: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="description">Description</Label>
+                <Textarea
+                  id="description"
+                  placeholder="Project description"
+                  value={newProject.description}
+                  onChange={(e) => setNewProject({ ...newProject, description: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="client">Client</Label>
+                <Select
+                  value={newProject.client_id}
+                  onValueChange={(value) => setNewProject({ ...newProject, client_id: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a client" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(clients || []).map((client: any) => (
+                      <SelectItem key={client.id} value={client.id}>
+                        {client.company || client.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="budget">Budget</Label>
+                  <Input
+                    id="budget"
+                    type="number"
+                    placeholder="0.00"
+                    value={newProject.budget}
+                    onChange={(e) => setNewProject({ ...newProject, budget: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="deadline">Deadline</Label>
+                  <Input
+                    id="deadline"
+                    type="date"
+                    value={newProject.deadline}
+                    onChange={(e) => setNewProject({ ...newProject, deadline: e.target.value })}
+                  />
+                </div>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleCreateProject} disabled={createProject.isPending}>
+                {createProject.isPending ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Creating...
+                  </>
+                ) : (
+                  'Create Project'
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
 
       {/* Filters */}
@@ -103,38 +231,46 @@ export default function Projects() {
       </div>
 
       {/* Projects Tabs */}
-      <Tabs defaultValue="all" className="space-y-6">
-        <TabsList>
-          <TabsTrigger value="all">
-            All ({filteredProjects.length})
-          </TabsTrigger>
-          <TabsTrigger value="active">
-            Active ({projectsByStatus.active.length})
-          </TabsTrigger>
-          <TabsTrigger value="review">
-            In Review ({projectsByStatus.review.length})
-          </TabsTrigger>
-          <TabsTrigger value="pending">
-            Pending ({projectsByStatus.pending.length})
-          </TabsTrigger>
-        </TabsList>
+      {isLoading ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <Skeleton className="h-40" />
+          <Skeleton className="h-40" />
+          <Skeleton className="h-40" />
+        </div>
+      ) : (
+        <Tabs defaultValue="all" className="space-y-6">
+          <TabsList>
+            <TabsTrigger value="all">
+              All ({filteredProjects.length})
+            </TabsTrigger>
+            <TabsTrigger value="in_progress">
+              In Progress ({projectsByStatus.in_progress.length})
+            </TabsTrigger>
+            <TabsTrigger value="review">
+              In Review ({projectsByStatus.review.length})
+            </TabsTrigger>
+            <TabsTrigger value="planning">
+              Planning ({projectsByStatus.planning.length})
+            </TabsTrigger>
+          </TabsList>
 
-        <TabsContent value="all" className="space-y-4">
-          <ProjectGrid projects={filteredProjects} viewMode={viewMode} />
-        </TabsContent>
+          <TabsContent value="all" className="space-y-4">
+            <ProjectGrid projects={filteredProjects} viewMode={viewMode} />
+          </TabsContent>
 
-        <TabsContent value="active" className="space-y-4">
-          <ProjectGrid projects={projectsByStatus.active} viewMode={viewMode} />
-        </TabsContent>
+          <TabsContent value="in_progress" className="space-y-4">
+            <ProjectGrid projects={projectsByStatus.in_progress} viewMode={viewMode} />
+          </TabsContent>
 
-        <TabsContent value="review" className="space-y-4">
-          <ProjectGrid projects={projectsByStatus.review} viewMode={viewMode} />
-        </TabsContent>
+          <TabsContent value="review" className="space-y-4">
+            <ProjectGrid projects={projectsByStatus.review} viewMode={viewMode} />
+          </TabsContent>
 
-        <TabsContent value="pending" className="space-y-4">
-          <ProjectGrid projects={projectsByStatus.pending} viewMode={viewMode} />
-        </TabsContent>
-      </Tabs>
+          <TabsContent value="planning" className="space-y-4">
+            <ProjectGrid projects={projectsByStatus.planning} viewMode={viewMode} />
+          </TabsContent>
+        </Tabs>
+      )}
     </div>
   );
 }
@@ -143,7 +279,7 @@ function ProjectGrid({
   projects,
   viewMode,
 }: {
-  projects: Project[];
+  projects: any[];
   viewMode: 'grid' | 'list';
 }) {
   if (projects.length === 0) {
@@ -162,13 +298,23 @@ function ProjectGrid({
           : 'space-y-4'
       )}
     >
-      {projects.map((project, index) => (
+      {projects.map((project: any, index: number) => (
         <div
           key={project.id}
           className="animate-slide-up"
           style={{ animationDelay: `${index * 50}ms` }}
         >
-          <ProjectCard project={project} />
+          <ProjectCard project={{
+            id: project.id,
+            project_name: project.name,
+            status: project.status === 'in_progress' ? 'active' : project.status,
+            progress: project.progress,
+            deadline: project.deadline,
+            budget: Number(project.budget) || 0,
+            client: project.clients ? {
+              company_name: project.clients.company || project.clients.name
+            } : undefined
+          }} />
         </div>
       ))}
     </div>

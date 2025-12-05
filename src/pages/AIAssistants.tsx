@@ -1,11 +1,12 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
+import { useConversations, useConversationMessages, useCreateConversation, useAddMessage } from '@/hooks/useSupabaseData';
+import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
 import {
   Brain,
   Code,
@@ -14,8 +15,7 @@ import {
   Send,
   Sparkles,
   Lightbulb,
-  Zap,
-  MessageSquare,
+  Loader2,
 } from 'lucide-react';
 
 interface Assistant {
@@ -97,40 +97,173 @@ interface Message {
   id: string;
   role: 'user' | 'assistant';
   content: string;
-  timestamp: Date;
 }
 
 export default function AIAssistants() {
   const [activeAssistant, setActiveAssistant] = useState<Assistant>(assistants[0]);
   const [input, setInput] = useState('');
-  const [messages, setMessages] = useState<Record<string, Message[]>>({});
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
+  const [localMessages, setLocalMessages] = useState<Message[]>([]);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
-  const currentMessages = messages[activeAssistant.id] || [];
+  const { data: conversations } = useConversations(activeAssistant.id);
+  const { data: dbMessages } = useConversationMessages(currentConversationId || undefined);
+  const createConversation = useCreateConversation();
+  const addMessage = useAddMessage();
 
-  const handleSend = () => {
-    if (!input.trim()) return;
+  // Use local messages for real-time updates, sync with DB messages
+  useEffect(() => {
+    if (dbMessages) {
+      setLocalMessages(dbMessages.map(m => ({
+        id: m.id,
+        role: m.role as 'user' | 'assistant',
+        content: m.content
+      })));
+    }
+  }, [dbMessages]);
+
+  // Auto-scroll to bottom when messages change
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [localMessages]);
+
+  // Reset conversation when assistant changes
+  useEffect(() => {
+    setCurrentConversationId(null);
+    setLocalMessages([]);
+  }, [activeAssistant.id]);
+
+  const streamChat = async (messages: { role: string; content: string }[]) => {
+    const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ai-chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+      },
+      body: JSON.stringify({ 
+        messages, 
+        assistant_type: activeAssistant.id 
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Failed to get response');
+    }
+
+    return response;
+  };
+
+  const handleSend = async () => {
+    if (!input.trim() || isStreaming) return;
 
     const userMessage: Message = {
-      id: Date.now().toString(),
+      id: `user-${Date.now()}`,
       role: 'user',
       content: input,
-      timestamp: new Date(),
     };
 
-    // Simulate AI response
-    const aiResponse: Message = {
-      id: (Date.now() + 1).toString(),
-      role: 'assistant',
-      content: `I'm ${activeAssistant.name}, your ${activeAssistant.role}. This is a demo response to: "${input}"\n\nIn the full version, I would provide intelligent, contextual responses powered by Google Gemini AI. I can help you with ${activeAssistant.capabilities.join(', ').toLowerCase()}.`,
-      timestamp: new Date(),
-    };
-
-    setMessages((prev) => ({
-      ...prev,
-      [activeAssistant.id]: [...(prev[activeAssistant.id] || []), userMessage, aiResponse],
-    }));
-
+    setLocalMessages(prev => [...prev, userMessage]);
     setInput('');
+    setIsStreaming(true);
+
+    try {
+      // Create conversation if needed
+      let conversationId = currentConversationId;
+      if (!conversationId) {
+        const newConversation = await createConversation.mutateAsync({
+          assistant_type: activeAssistant.id,
+          title: input.slice(0, 50),
+        });
+        conversationId = newConversation.id;
+        setCurrentConversationId(conversationId);
+      }
+
+      // Save user message to DB
+      await addMessage.mutateAsync({
+        conversation_id: conversationId,
+        role: 'user',
+        content: input,
+      });
+
+      // Prepare messages for AI
+      const chatMessages = localMessages.map(m => ({
+        role: m.role,
+        content: m.content,
+      }));
+      chatMessages.push({ role: 'user', content: input });
+
+      // Stream response
+      const response = await streamChat(chatMessages);
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+
+      let assistantContent = '';
+      const assistantId = `assistant-${Date.now()}`;
+
+      // Add placeholder for assistant message
+      setLocalMessages(prev => [...prev, {
+        id: assistantId,
+        role: 'assistant',
+        content: '',
+      }]);
+
+      if (reader) {
+        let buffer = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          
+          // Process complete lines
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const jsonStr = line.slice(6).trim();
+              if (jsonStr === '[DONE]') continue;
+              
+              try {
+                const parsed = JSON.parse(jsonStr);
+                const content = parsed.choices?.[0]?.delta?.content;
+                if (content) {
+                  assistantContent += content;
+                  setLocalMessages(prev => 
+                    prev.map(m => 
+                      m.id === assistantId 
+                        ? { ...m, content: assistantContent }
+                        : m
+                    )
+                  );
+                }
+              } catch {
+                // Skip invalid JSON
+              }
+            }
+          }
+        }
+      }
+
+      // Save assistant message to DB
+      if (assistantContent) {
+        await addMessage.mutateAsync({
+          conversation_id: conversationId,
+          role: 'assistant',
+          content: assistantContent,
+        });
+      }
+
+    } catch (error) {
+      console.error('Chat error:', error);
+      toast.error(error instanceof Error ? error.message : 'Failed to send message');
+    } finally {
+      setIsStreaming(false);
+    }
   };
 
   const handleSuggestionClick = (suggestion: string) => {
@@ -196,8 +329,8 @@ export default function AIAssistants() {
           </div>
 
           {/* Messages */}
-          <ScrollArea className="flex-1 p-4">
-            {currentMessages.length === 0 ? (
+          <ScrollArea className="flex-1 p-4" ref={scrollRef}>
+            {localMessages.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-center px-4">
                 <div className={cn('rounded-full p-4 mb-4', activeAssistant.bgColor)}>
                   <activeAssistant.icon className={cn('h-8 w-8', activeAssistant.color)} />
@@ -242,7 +375,7 @@ export default function AIAssistants() {
               </div>
             ) : (
               <div className="space-y-4">
-                {currentMessages.map((message) => (
+                {localMessages.map((message) => (
                   <div
                     key={message.id}
                     className={cn(
@@ -262,6 +395,13 @@ export default function AIAssistants() {
                     </div>
                   </div>
                 ))}
+                {isStreaming && localMessages[localMessages.length - 1]?.content === '' && (
+                  <div className="flex justify-start">
+                    <div className="bg-muted rounded-2xl rounded-tl-sm px-4 py-3">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </ScrollArea>
@@ -280,9 +420,14 @@ export default function AIAssistants() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 className="flex-1"
+                disabled={isStreaming}
               />
-              <Button type="submit" size="icon" disabled={!input.trim()}>
-                <Send className="h-4 w-4" />
+              <Button type="submit" size="icon" disabled={!input.trim() || isStreaming}>
+                {isStreaming ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Send className="h-4 w-4" />
+                )}
               </Button>
             </form>
           </div>

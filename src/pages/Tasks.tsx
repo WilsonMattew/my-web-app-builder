@@ -1,8 +1,27 @@
 import { useState } from 'react';
-import { mockTasks, Task } from '@/lib/mockData';
+import { useTasks, useCreateTask, useUpdateTask, useProjects, useProfiles } from '@/hooks/useSupabaseData';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
+import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import {
   Plus,
@@ -13,6 +32,7 @@ import {
   CheckCircle2,
   Circle,
   Pause,
+  Loader2,
 } from 'lucide-react';
 
 type TaskStatus = 'todo' | 'in_progress' | 'review' | 'blocked' | 'completed';
@@ -41,16 +61,57 @@ const priorityColors = {
 
 export default function Tasks() {
   const [searchQuery, setSearchQuery] = useState('');
-  const [tasks, setTasks] = useState(mockTasks);
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [newTask, setNewTask] = useState({
+    title: '',
+    description: '',
+    project_id: '',
+    assigned_to: '',
+    priority: 'medium' as 'low' | 'medium' | 'high' | 'urgent',
+    estimated_hours: '',
+    due_date: '',
+  });
 
-  const filteredTasks = tasks.filter((task) =>
-    task.title.toLowerCase().includes(searchQuery.toLowerCase())
+  const { data: tasks, isLoading } = useTasks();
+  const { data: projects } = useProjects();
+  const { data: profiles } = useProfiles();
+  const createTask = useCreateTask();
+  const updateTask = useUpdateTask();
+
+  const filteredTasks = (tasks || []).filter((task: any) =>
+    task.title?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   const tasksByStatus = columns.reduce((acc, column) => {
-    acc[column.id] = filteredTasks.filter((task) => task.status === column.id);
+    acc[column.id] = filteredTasks.filter((task: any) => task.status === column.id);
     return acc;
-  }, {} as Record<TaskStatus, Task[]>);
+  }, {} as Record<TaskStatus, any[]>);
+
+  const handleCreateTask = async () => {
+    if (!newTask.title) return;
+    
+    await createTask.mutateAsync({
+      title: newTask.title,
+      description: newTask.description || null,
+      project_id: newTask.project_id || null,
+      assigned_to: newTask.assigned_to || null,
+      priority: newTask.priority,
+      estimated_hours: newTask.estimated_hours ? parseInt(newTask.estimated_hours) : null,
+      due_date: newTask.due_date || null,
+      status: 'todo',
+    });
+    
+    setNewTask({ title: '', description: '', project_id: '', assigned_to: '', priority: 'medium', estimated_hours: '', due_date: '' });
+    setIsDialogOpen(false);
+  };
+
+  const handleStatusChange = async (taskId: string, newStatus: TaskStatus) => {
+    await updateTask.mutateAsync({
+      id: taskId,
+      status: newStatus,
+      completed_at: newStatus === 'completed' ? new Date().toISOString() : null,
+    });
+  };
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -62,10 +123,133 @@ export default function Tasks() {
             Organize and track your work with Kanban board
           </p>
         </div>
-        <Button className="gap-2">
-          <Plus className="h-4 w-4" />
-          New Task
-        </Button>
+        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+          <DialogTrigger asChild>
+            <Button className="gap-2">
+              <Plus className="h-4 w-4" />
+              New Task
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="sm:max-w-[500px]">
+            <DialogHeader>
+              <DialogTitle>Create New Task</DialogTitle>
+              <DialogDescription>
+                Add a new task to your workspace
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="title">Task Title</Label>
+                <Input
+                  id="title"
+                  placeholder="Enter task title"
+                  value={newTask.title}
+                  onChange={(e) => setNewTask({ ...newTask, title: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="description">Description</Label>
+                <Textarea
+                  id="description"
+                  placeholder="Task description"
+                  value={newTask.description}
+                  onChange={(e) => setNewTask({ ...newTask, description: e.target.value })}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="project">Project</Label>
+                  <Select
+                    value={newTask.project_id}
+                    onValueChange={(value) => setNewTask({ ...newTask, project_id: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select project" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(projects || []).map((project: any) => (
+                        <SelectItem key={project.id} value={project.id}>
+                          {project.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="assigned">Assign To</Label>
+                  <Select
+                    value={newTask.assigned_to}
+                    onValueChange={(value) => setNewTask({ ...newTask, assigned_to: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select person" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(profiles || []).map((profile: any) => (
+                        <SelectItem key={profile.id} value={profile.id}>
+                          {profile.full_name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="priority">Priority</Label>
+                  <Select
+                    value={newTask.priority}
+                    onValueChange={(value: any) => setNewTask({ ...newTask, priority: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="low">Low</SelectItem>
+                      <SelectItem value="medium">Medium</SelectItem>
+                      <SelectItem value="high">High</SelectItem>
+                      <SelectItem value="urgent">Urgent</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="hours">Est. Hours</Label>
+                  <Input
+                    id="hours"
+                    type="number"
+                    placeholder="0"
+                    value={newTask.estimated_hours}
+                    onChange={(e) => setNewTask({ ...newTask, estimated_hours: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="due">Due Date</Label>
+                  <Input
+                    id="due"
+                    type="date"
+                    value={newTask.due_date}
+                    onChange={(e) => setNewTask({ ...newTask, due_date: e.target.value })}
+                  />
+                </div>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleCreateTask} disabled={createTask.isPending}>
+                {createTask.isPending ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Creating...
+                  </>
+                ) : (
+                  'Create Task'
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
 
       {/* Search */}
@@ -80,55 +264,77 @@ export default function Tasks() {
       </div>
 
       {/* Kanban Board */}
-      <div className="flex gap-4 overflow-x-auto pb-4">
-        {columns.map((column) => (
-          <div
-            key={column.id}
-            className="flex-shrink-0 w-80 bg-muted/30 rounded-xl p-4"
-          >
-            {/* Column Header */}
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <column.icon className={cn('h-5 w-5', column.color)} />
-                <h3 className="font-semibold">{column.title}</h3>
-                <Badge variant="secondary" className="text-xs">
-                  {tasksByStatus[column.id].length}
-                </Badge>
-              </div>
-              <Button variant="ghost" size="icon" className="h-8 w-8">
-                <MoreHorizontal className="h-4 w-4" />
-              </Button>
-            </div>
-
-            {/* Tasks */}
-            <div className="space-y-3">
-              {tasksByStatus[column.id].map((task, index) => (
-                <TaskCard key={task.id} task={task} index={index} />
-              ))}
-
-              {tasksByStatus[column.id].length === 0 && (
-                <div className="text-center py-8 text-muted-foreground text-sm">
-                  No tasks
+      {isLoading ? (
+        <div className="flex gap-4">
+          {columns.map((column) => (
+            <Skeleton key={column.id} className="flex-shrink-0 w-80 h-96" />
+          ))}
+        </div>
+      ) : (
+        <div className="flex gap-4 overflow-x-auto pb-4">
+          {columns.map((column) => (
+            <div
+              key={column.id}
+              className="flex-shrink-0 w-80 bg-muted/30 rounded-xl p-4"
+            >
+              {/* Column Header */}
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <column.icon className={cn('h-5 w-5', column.color)} />
+                  <h3 className="font-semibold">{column.title}</h3>
+                  <Badge variant="secondary" className="text-xs">
+                    {tasksByStatus[column.id]?.length || 0}
+                  </Badge>
                 </div>
-              )}
+                <Button variant="ghost" size="icon" className="h-8 w-8">
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </div>
 
-              {/* Add Task Button */}
-              <Button
-                variant="ghost"
-                className="w-full justify-start text-muted-foreground hover:text-foreground"
-              >
-                <Plus className="h-4 w-4 mr-2" />
-                Add task
-              </Button>
+              {/* Tasks */}
+              <div className="space-y-3">
+                {(tasksByStatus[column.id] || []).map((task: any, index: number) => (
+                  <TaskCard 
+                    key={task.id} 
+                    task={task} 
+                    index={index}
+                    onStatusChange={handleStatusChange}
+                  />
+                ))}
+
+                {(!tasksByStatus[column.id] || tasksByStatus[column.id].length === 0) && (
+                  <div className="text-center py-8 text-muted-foreground text-sm">
+                    No tasks
+                  </div>
+                )}
+
+                {/* Add Task Button */}
+                <Button
+                  variant="ghost"
+                  className="w-full justify-start text-muted-foreground hover:text-foreground"
+                  onClick={() => setIsDialogOpen(true)}
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add task
+                </Button>
+              </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-function TaskCard({ task, index }: { task: Task; index: number }) {
+function TaskCard({ 
+  task, 
+  index,
+  onStatusChange 
+}: { 
+  task: any; 
+  index: number;
+  onStatusChange: (taskId: string, status: TaskStatus) => void;
+}) {
   return (
     <div
       className={cn(
@@ -142,7 +348,7 @@ function TaskCard({ task, index }: { task: Task; index: number }) {
           <h4 className="font-medium text-sm line-clamp-2">{task.title}</h4>
           <Badge
             variant="outline"
-            className={cn('shrink-0 capitalize text-xs', priorityColors[task.priority])}
+            className={cn('shrink-0 capitalize text-xs', priorityColors[task.priority as keyof typeof priorityColors])}
           >
             {task.priority}
           </Badge>
