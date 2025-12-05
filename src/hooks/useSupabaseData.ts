@@ -301,7 +301,9 @@ export function useUpdateProfile() {
 }
 
 // ==================== AI CONVERSATIONS ====================
-export function useConversations(assistantType?: string) {
+type AssistantType = 'oracle' | 'aether' | 'muse' | 'ascend';
+
+export function useConversations(assistantType?: AssistantType) {
   const { user } = useAuthStore();
   
   return useQuery({
