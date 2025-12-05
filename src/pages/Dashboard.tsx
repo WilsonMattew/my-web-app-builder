@@ -155,7 +155,7 @@ export default function Dashboard() {
                       id: project.id,
                       project_name: project.name,
                       status: project.status === 'in_progress' ? 'active' : project.status,
-                      progress: project.progress,
+                      progress_percentage: project.progress || 0,
                       deadline: project.deadline,
                       budget: Number(project.budget) || 0,
                       client: project.clients ? {

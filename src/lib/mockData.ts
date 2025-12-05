@@ -1,22 +1,22 @@
 // Mock data for demonstration purposes
 
 export interface Client {
-  id: string;
+  id?: string;
   company_name: string;
-  industry: string;
-  status: 'lead' | 'prospect' | 'active' | 'retainer' | 'churned' | 'paused';
-  acquisition_source: string;
-  estimated_value: number;
+  industry?: string;
+  status?: 'lead' | 'prospect' | 'active' | 'retainer' | 'churned' | 'paused';
+  acquisition_source?: string;
+  estimated_value?: number;
   logo_url?: string;
 }
 
 export interface Project {
   id: string;
-  client_id: string;
+  client_id?: string;
   project_name: string;
-  project_type: string;
+  project_type?: string;
   status: 'pending' | 'active' | 'on_hold' | 'review' | 'completed' | 'cancelled';
-  priority: 'low' | 'medium' | 'high' | 'urgent';
+  priority?: 'low' | 'medium' | 'high' | 'urgent';
   progress_percentage: number;
   deadline: string;
   budget: number;

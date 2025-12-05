@@ -18,8 +18,10 @@ import {
   Loader2,
 } from 'lucide-react';
 
+type AssistantType = 'oracle' | 'aether' | 'muse' | 'ascend';
+
 interface Assistant {
-  id: string;
+  id: AssistantType;
   name: string;
   role: string;
   description: string;
